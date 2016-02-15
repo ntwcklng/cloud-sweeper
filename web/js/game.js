@@ -118,9 +118,10 @@
 		var ls = localStorage;
 		var scoreValue;
 		var maxScore = Math.max(
-      gameState.cloudScore,
-      gameState.bestCloudScore[gameState.difficulty]
-    );
+			gameState.cloudScore,
+			gameState.bestCloudScore[gameState.difficulty]
+		);
+		
 		if(typeof(Storage) !== "undefined") {
 			var getStorageScore = ls.getItem("bestCloudScore");
 			// 0 = Build Version, 1 = difficulty, 2 = the best score

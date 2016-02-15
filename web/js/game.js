@@ -121,7 +121,7 @@
 			gameState.cloudScore,
 			gameState.bestCloudScore[gameState.difficulty]
 		);
-		
+
 		if(typeof(Storage) !== "undefined") {
 			var getStorageScore = ls.getItem("bestCloudScore");
 			// 0 = Build Version, 1 = difficulty, 2 = the best score
@@ -139,15 +139,10 @@
 					);
 				}
 			}
-
 			scoreValue = "" + Debug.BUILD_VERSION + "," + gameState.difficulty + "," + maxScore + "";
 			ls.setItem("bestCloudScore", scoreValue);
-			gameState.bestCloudScore[gameState.difficulty] = maxScore;
-
-		} else {
-			gameState.bestCloudScore[gameState.difficulty] = maxScore;
 		}
-
+		gameState.bestCloudScore[gameState.difficulty] = maxScore;
 	}
 
 	function waitAtWelcomeScreen() {

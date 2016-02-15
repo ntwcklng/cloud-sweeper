@@ -115,11 +115,38 @@
 	}
 
 	function manageBestCloudScore() {
-		gameState.bestCloudScore[gameState.difficulty] =
-			Math.max(
-				gameState.cloudScore,
-				gameState.bestCloudScore[gameState.difficulty]
-			);
+		var ls = localStorage;
+		var scoreValue;
+		var maxScore = Math.max(
+      gameState.cloudScore,
+      gameState.bestCloudScore[gameState.difficulty]
+    );
+		if(typeof(Storage) !== "undefined") {
+			var getStorageScore = ls.getItem("bestCloudScore");
+			// 0 = Build Version, 1 = difficulty, 2 = the best score
+
+			if(getStorageScore) {
+				getStorageScore = getStorageScore.split(",");
+				var storedBuildVersion = getStorageScore[0].split(".");
+				var actualBuildVersion = Debug.BUILD_VERSION.split(".");
+				if ((storedBuildVersion[0] === actualBuildVersion[0] && storedBuildVersion[1] === actualBuildVersion[1]) && parseInt(getStorageScore[1]) === gameState.difficulty) {
+					// update storage
+					maxScore = Math.max(
+						getStorageScore[2],
+						gameState.cloudScore,
+						gameState.bestCloudScore[gameState.difficulty]
+					);
+				}
+			}
+
+			scoreValue = "" + Debug.BUILD_VERSION + "," + gameState.difficulty + "," + maxScore + "";
+			ls.setItem("bestCloudScore", scoreValue);
+			gameState.bestCloudScore[gameState.difficulty] = maxScore;
+
+		} else {
+			gameState.bestCloudScore[gameState.difficulty] = maxScore;
+		}
+
 	}
 
 	function waitAtWelcomeScreen() {

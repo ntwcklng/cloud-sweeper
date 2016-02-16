@@ -5,8 +5,8 @@ var Storage = (function Storage(){
 	ls = localStorage;
 
 	publicAPI = {
-		updateBestScore: updateBestScore
-	};
+		updateBestScore: updateBestScore,
+	}
 
 	return publicAPI;
 

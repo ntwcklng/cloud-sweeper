@@ -119,7 +119,6 @@
 			gameState.cloudScore,
 			gameState.bestCloudScore[gameState.difficulty]
 		);
-
 		var getBestScore = Storage.updateBestScore(gameState.difficulty, maxScore);
 		gameState.bestCloudScore[gameState.difficulty] = getBestScore;
 	}

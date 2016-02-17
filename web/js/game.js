@@ -2,7 +2,7 @@
 	"use strict";
 
 	Debug.ON = true;
-	Debug.BUILD_VERSION = "1.0.7";
+	Debug.BUILD_VERSION = "1.0.10";
 
 	var sceneCnv,
 		sceneCtx,

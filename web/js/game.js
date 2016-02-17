@@ -1,10 +1,12 @@
-(function Game(){
+var Game = (function Game(){
 	"use strict";
 
 	Debug.ON = true;
 	Debug.BUILD_VERSION = "1.0.10";
 
-	var sceneCnv,
+	var publicAPI,
+
+		sceneCnv,
 		sceneCtx,
 
 		tmpCnv = Browser.createCanvas(),
@@ -34,14 +36,41 @@
 		loadResources(),
 		Browser.checkOrientation(),
 	])
-	.catch(function(err){
-		console.log(err);
-	})
 	.then(snapToViewport)
 	.then(initGame)
 	.then(onViewportSize)
-	.then(startWelcomeEntering);
+	.then(Welcome.start)
+	.catch(function onErr(err){
+		console.log(err);
+	});
 
+	// listen for game action signals from other modules
+	EVT.on("game:clear-scene",clearScene);
+	EVT.on("game:setup",setupGame);
+	EVT.on("game:init-clouds",initClouds);
+	EVT.on("game:play",startPlaying);
+	EVT.on("game:draw-status",drawGameStatus);
+	EVT.on("game:background-tick",backgroundTick);
+	EVT.on("game:darken-scene",darkenScene);
+	EVT.on("game:cleanup-recycle",cleanupRecycle);
+	EVT.on("game:listen-keyboard-esc",function listenKeyboardEscape(){
+		Utils.onEvent(Interaction.EVENT_KEY,cancelGame);
+	});
+	EVT.on("game:cancel-keyboard-esc",function cancelKeyboardEscape(){
+		Utils.offEvent(Interaction.EVENT_KEY,cancelGame);
+	});
+
+
+	publicAPI = {
+		gameState: gameState,
+		sceneCtx: null,
+
+		GAME_EASY: GAME_EASY,
+		GAME_MEDIUM: GAME_MEDIUM,
+		GAME_HARD: GAME_HARD,
+	};
+
+	return publicAPI;
 
 
 	// ******************************
@@ -65,7 +94,7 @@
 
 			function onDocument() {
 				sceneCnv = Browser.getElement("[rel~=js-scene]");
-				sceneCtx = sceneCnv.getContext("2d");
+				publicAPI.sceneCtx = sceneCtx = sceneCnv.getContext("2d");
 				resolve();
 			}
 		});
@@ -121,80 +150,6 @@
 		);
 		var getBestScore = Storage.updateBestScore(gameState.difficulty, maxScore);
 		gameState.bestCloudScore[gameState.difficulty] = getBestScore;
-	}
-
-	function waitAtWelcomeScreen() {
-		// stop listening to ESC
-		Utils.offEvent(Interaction.EVENT_KEY,cancelGame);
-
-		Debug.resetFramerate();
-
-		// re-enable touch
-		Interaction.enableTouch();
-
-		// show screen
-		drawWelcome();
-
-		// recycle cloud objects
-		cleanupRecycle();
-
-		if (!gameState.welcomeWaiting) {
-			gameState.welcomeEntering = false;
-			gameState.welcomeWaiting = true;
-
-			var screen = Screens.getWelcomeScreen();
-			Utils.onEvent(Interaction.EVENT_PRESS,onInteraction);
-		}
-
-
-		// ******************************
-
-		function onInteraction(evt) {
-			var key;
-			var buttonPressed;
-
-			evt.preventDefault();
-
-			if ((key = Interaction.detectKey(evt))) {
-				if (key == Interaction.KEYBOARD_1 || key == Interaction.KEYBOARD_ENTER) {
-					buttonPressed = 0;
-				}
-				else if (key == Interaction.KEYBOARD_2) {
-					buttonPressed = 1;
-				}
-				else if (key == Interaction.KEYBOARD_3) {
-					buttonPressed = 2;
-				}
-			}
-			else if ((evt = Interaction.fixTouchCoords(evt))) {
-				for (var i=0; i<screen.hitAreas.length; i++) {
-					// recognized button press?
-					if (Utils.pointInArea(
-						evt.clientX-screen.x,
-						evt.clientY-screen.y,
-						screen.hitAreas[i]
-					)) {
-						buttonPressed = i;
-						break;
-					}
-				}
-			}
-
-			// respond to button press?
-			if (buttonPressed != null) {
-				Utils.offEvent(Interaction.EVENT_PRESS,onInteraction);
-				if (buttonPressed === 0) {
-					gameState.difficulty = GAME_EASY;
-				}
-				else if (buttonPressed === 1) {
-					gameState.difficulty = GAME_MEDIUM;
-				}
-				else if (buttonPressed === 2) {
-					gameState.difficulty = GAME_HARD;
-				}
-				startWelcomeLeaving();
-			}
-		}
 	}
 
 	function cleanupRecycle() {
@@ -287,7 +242,7 @@
 		gameState.retryLeaving = false;
 
 		return Promise.resolve(initGame())
-		.then(startPlayEntering);
+		.then(PlayHint.start);
 	}
 
 	function fillArray(arr,val,count) {
@@ -296,6 +251,21 @@
 			arr[i] = val;
 		}
 		return arr;
+	}
+
+	function initClouds() {
+		// generate background clouds to start
+		for (var i=0; i<gameState.backgroundCloudInitialCount; i++) {
+			// generate a new cloud
+			var cloud = Clouds.getCloud(BACKGROUND_CLOUD);
+
+			// find a non-overlapping position for the new
+			// cloud (to look nicer at start)
+			positionBackgroundCloud(cloud);
+
+			// save the new cloud (and position)
+			gameState.backgroundClouds[i] = cloud;
+		}
 	}
 
 	function initGame() {
@@ -319,12 +289,12 @@
 		gameState.engineRunning = false;
 		gameState.cloudScore = 0;
 
-		gameState.planeY = 0;
-
 		gameState.minAltitude = 0;
 		gameState.maxAltitude = 1000;
 		gameState.altitudeLevelOffThreshold = 850;
 		gameState.altitude = 700;
+
+		gameState.planeY = altitudeToViewport(gameState.altitude);
 
 		gameState.minVelocity = -25;
 		gameState.maxVelocity = 15;
@@ -477,64 +447,6 @@
 		gameState.shakeDeltaY = Math.min(-5,Math.round(-8 * gameState.speedRatio));
 	}
 
-	function startWelcomeEntering() {
-		// disable any touch for right now
-		Interaction.disableTouch();
-
-		gameState.playHintShown = false;
-		gameState.retryLeaving = false;
-		gameState.playLeaving = false;
-		gameState.welcomeEntering = true;
-		gameState.welcomeEnteringTickCount = 0;
-
-		gameState.RAFhook = requestAnimationFrame(runWelcomeEntering);
-	}
-
-	function startWelcomeLeaving() {
-		// disable any touch for right now
-		Interaction.disableTouch();
-
-		gameState.welcomeWaiting = false;
-		gameState.welcomeLeaving = true;
-		gameState.welcomeLeavingTickCount = gameState.welcomeEnteringTickCount;
-
-		gameState.RAFhook = requestAnimationFrame(runWelcomeLeaving);
-	}
-
-	function startPlayEntering() {
-		// disable any touch for right now
-		Interaction.disableTouch();
-
-		// handle ESC during game
-		Utils.onEvent(Interaction.EVENT_KEY,cancelGame);
-
-		clearScene();
-
-		// generate background clouds to start
-		for (var i=0; i<gameState.backgroundCloudInitialCount; i++) {
-			// generate a new cloud
-			var cloud = Clouds.getCloud(BACKGROUND_CLOUD);
-
-			// find a non-overlapping position for the new
-			// cloud (to look nicer at start)
-			positionBackgroundCloud(cloud);
-
-			// save the new cloud (and position)
-			gameState.backgroundClouds[i] = cloud;
-		}
-
-		gameState.welcomeWaiting = false;
-		gameState.retryLeaving = false;
-		gameState.playEntering = true;
-		gameState.planeXStart = (gameState.planeX = -gameState.planeSize);
-		gameState.planeY = altitudeToViewport(gameState.altitude);
-
-		Plane.setAngle(gameState.planeAngle);
-		PlayHint.scaleTo(gameState.planeSize * 1.5);
-
-		gameState.RAFhook = requestAnimationFrame(runPlayEntering);
-	}
-
 	function startPlaying() {
 		Interaction.enableTouch();
 
@@ -593,189 +505,6 @@
 		}
 
 		gameState.RAFhook = requestAnimationFrame(runRetryLeaving);
-	}
-
-	function runWelcomeEntering() {
-		Debug.trackFramerate();
-
-		gameState.RAFhook = null;
-
-		if (gameState.welcomeEntering) {
-			gameState.welcomeEnteringTickCount++;
-
-			if (gameState.welcomeEnteringTickCount <= gameState.welcomeEnteringTickThreshold) {
-				var opacityThreshold = 17;
-				var popThreshold = 15;
-				var popRatio = 1.1;
-				var opacity;
-				var ratio;
-
-				if (gameState.welcomeEnteringTickCount <= opacityThreshold) {
-					opacity = 1 - ((opacityThreshold-gameState.welcomeEnteringTickCount) / opacityThreshold);
-				}
-
-				if (gameState.welcomeEnteringTickCount <= popThreshold) {
-					ratio = popRatio * (
-						1 -
-						((popThreshold-gameState.welcomeEnteringTickCount) / popThreshold)
-					);
-				}
-				else {
-					ratio = popRatio - (
-						(popRatio - 1) * (
-							1 - (
-								(gameState.welcomeEnteringTickThreshold-gameState.welcomeEnteringTickCount) /
-								(gameState.welcomeEnteringTickThreshold-popThreshold)
-							)
-						)
-					);
-				}
-
-				drawWelcome(opacity,ratio);
-
-				gameState.RAFhook = requestAnimationFrame(runWelcomeEntering);
-			}
-			else {
-				waitAtWelcomeScreen();
-			}
-		}
-	}
-
-	function runWelcomeLeaving() {
-		Debug.trackFramerate();
-
-		gameState.RAFhook = null;
-
-		if (gameState.welcomeLeaving) {
-			gameState.welcomeLeavingTickCount--;
-
-			if (gameState.welcomeLeavingTickCount >= 0) {
-				var opacityThreshold = 17;
-				var popThreshold = 12;
-				var popRatio = 1.1;
-				var opacity;
-				var ratio;
-
-				if (gameState.welcomeLeavingTickCount <= opacityThreshold) {
-					opacity = 1 - ((opacityThreshold-gameState.welcomeLeavingTickCount) / opacityThreshold);
-				}
-
-				if (gameState.welcomeLeavingTickCount <= popThreshold) {
-					ratio = popRatio * (
-						1 -
-						((popThreshold-gameState.welcomeLeavingTickCount) / popThreshold)
-					);
-				}
-				else {
-					ratio = popRatio - (
-						(popRatio - 1) * (
-							1 - (
-								(gameState.welcomeLeavingTickThreshold-gameState.welcomeLeavingTickCount) /
-								(gameState.welcomeLeavingTickThreshold-popThreshold)
-							)
-						)
-					);
-				}
-
-				drawWelcome(opacity,ratio);
-
-				gameState.RAFhook = requestAnimationFrame(runWelcomeLeaving);
-			}
-			else {
-				setupGame();
-			}
-		}
-	}
-
-	function runPlayEntering() {
-		Debug.trackFramerate();
-
-		gameState.RAFhook = null;
-
-		if (gameState.playEntering) {
-			gameState.playEnteringTickCount++;
-
-			if (gameState.playEnteringTickCount <= gameState.playEnteringTickThreshold) {
-				if (!gameState.playHintShown) {
-					var opacityTickThreshold = 60;
-					var planeTickThreshold = opacityTickThreshold + 60;
-					var hintTickThreshold = planeTickThreshold + 6;
-					var hintCompleteThreshold = hintTickThreshold + 90;
-					var hintFadeThreshold = hintCompleteThreshold + 30;
-					var hintFadeCompleteThreshold = hintFadeThreshold + 30;
-					var countdownTickThreshold = gameState.playEnteringTickThreshold - 180;
-
-					var showSunMeter = gameState.playEnteringTickCount >= hintTickThreshold;
-				}
-				else {
-					gameState.playEnteringTickThreshold = 210;
-
-					var opacityTickThreshold = 60;
-					var planeTickThreshold = opacityTickThreshold + 60;
-					var hintTickThreshold = -1;
-					var hintCompleteThreshold = -1;
-					var hintFadeThreshold = -1;
-					var hintFadeCompleteThreshold = -1;
-					var countdownTickThreshold = gameState.playEnteringTickThreshold - 180;
-
-					var showSunMeter = gameState.playEnteringTickCount >= planeTickThreshold;
-				}
-
-				var sceneOpacity = 1;
-				// fade in the clouds?
-				if (gameState.playEnteringTickCount < opacityTickThreshold) {
-					sceneOpacity = gameState.playEnteringTickCount / opacityTickThreshold;
-				}
-				// slide in the plane?
-				else if (gameState.playEnteringTickCount < planeTickThreshold) {
-					gameState.planeX = Math.ceil(
-						gameState.planeXStart +
-						(
-							(gameState.planeXThreshold - gameState.planeXStart) *
-							(
-								(gameState.playEnteringTickCount-opacityTickThreshold) /
-								(planeTickThreshold-opacityTickThreshold)
-							)
-						)
-					);
-				}
-
-				var hintOpacity = 0;
-				if (gameState.playEnteringTickCount >= hintTickThreshold) {
-					if (gameState.playEnteringTickCount < hintCompleteThreshold) {
-						hintOpacity = 1;
-						PlayHint.tick();
-					}
-					else if (gameState.playEnteringTickCount < hintFadeThreshold) {
-						hintOpacity = 1;
-					}
-					else if (gameState.playEnteringTickCount < hintFadeCompleteThreshold) {
-						hintOpacity = (hintFadeCompleteThreshold - gameState.playEnteringTickCount) / (hintFadeCompleteThreshold - hintFadeThreshold);
-					}
-				}
-
-				// start countdown?
-				var countdown = 0;
-				if (gameState.playEnteringTickCount >= countdownTickThreshold) {
-					countdown = Math.min(Math.max(
-						Math.ceil(
-							(gameState.playEnteringTickThreshold-gameState.playEnteringTickCount) / 60
-						),
-						1
-					),3);
-				}
-
-				Plane.tick();
-				backgroundTick();
-
-				drawIntro(sceneOpacity,countdown,hintOpacity,showSunMeter);
-
-				gameState.RAFhook = requestAnimationFrame(runPlayEntering);
-			}
-			else {
-				startPlaying();
-			}
-		}
 	}
 
 	function runPlaying() {
@@ -950,84 +679,12 @@
 			}
 			else if (gameState.gotoWelcome) {
 				gameState.gotoWelcome = false;
-				startWelcomeEntering();
+				Welcome.start();
 			}
 			else {
 				setupGame();
 			}
 		}
-	}
-
-	function drawWelcome(opacity,ratio) {
-		ratio = (ratio != null) ? ratio : 1;
-		opacity = (opacity != null) ? opacity: 1;
-
-		clearScene();
-
-		var screen = Screens.getWelcomeScreen();
-		screen.x = (Browser.viewportDims.width-screen.cnv.width) / 2;
-		screen.y = (Browser.viewportDims.height-screen.cnv.height) / 2;
-
-		sceneCtx.globalAlpha = opacity;
-
-		if (ratio != 1) {
-			sceneCtx.save();
-			Utils.scaleCanvas(sceneCtx,Browser.viewportDims.width/2,Browser.viewportDims.height/2,ratio,ratio);
-		}
-
-		sceneCtx.drawImage(screen.cnv,screen.x,screen.y);
-
-		if (ratio != 1) {
-			sceneCtx.restore();
-		}
-
-		sceneCtx.globalAlpha = 1;
-
-		Debug.showInfo(sceneCtx);
-	}
-
-	function drawIntro(drawOpacity,countdown,hintOpacity,showSunMeter) {
-		var cloud;
-
-		clearScene();
-
-		sceneCtx.globalAlpha = drawOpacity;
-
-		for (var i=0; i<gameState.backgroundClouds.length; i++) {
-			cloud = gameState.backgroundClouds[i];
-			sceneCtx.drawImage(cloud.cnv,cloud.x,cloud.y);
-		}
-
-		sceneCtx.globalAlpha = 1;
-
-		var plane = Plane.getPlane();
-		sceneCtx.drawImage(plane.cnv,gameState.planeX,gameState.planeY);
-
-		// gray out screen to simulate clouding out the sun
-		darkenScene(drawOpacity);
-
-		if (hintOpacity > 0) {
-			sceneCtx.globalAlpha = hintOpacity;
-			var hint = PlayHint.getHint();
-			var planeHeight = Plane.getScaledHeight();
-			sceneCtx.drawImage(hint.cnv,gameState.planeXThreshold + gameState.planeSize,gameState.planeY + (planeHeight / 3));
-			sceneCtx.globalAlpha = 1;
-		}
-
-		if (showSunMeter) {
-			// scoreboard and sun-meter
-			drawGameStatus();
-		}
-
-		if (countdown) {
-			var numChar = Text.getCachedCharacter("countdown:" + countdown);
-			var x = ((Browser.viewportDims.width - numChar.cnv.width) / 2);
-			var y = 25;
-
-			sceneCtx.drawImage(numChar.cnv,x,y,numChar.cnv.width,numChar.cnv.height);
-		}
-
-		Debug.showInfo(sceneCtx);
 	}
 
 	function drawGameScene() {
@@ -1097,7 +754,7 @@
 			sceneCtx.restore();
 		}
 
-		Debug.showInfo(sceneCtx);
+		Debug.showInfo();
 	}
 
 	function darkenScene(drawOpacity) {
@@ -1313,7 +970,7 @@
 			sceneCtx.restore();
 		}
 
-		Debug.showInfo(sceneCtx);
+		Debug.showInfo();
 	}
 
 	function cacheScaledDigits(textType,cacheIDPrefix,scaleRatio,digitHeight) {
@@ -1615,7 +1272,7 @@
 				gameState.RAFhook = null;
 			}
 
-			waitAtWelcomeScreen();
+			Welcome.wait();
 		}
 	}
 

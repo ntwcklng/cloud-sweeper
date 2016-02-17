@@ -49,7 +49,6 @@ var Storage = (function Storage(){
 		if(getStorageScore) {
 			// overwrite the template
 			storeData = getStorageScore;
-			
 			var storedBuildVersion = storeData.version.split(".");
 			var actualBuildVersion = Debug.BUILD_VERSION.split(".");
 
@@ -64,6 +63,7 @@ var Storage = (function Storage(){
 				storeData[getDifficulty].score
 			);
 		}
+		storeData.version = Debug.BUILD_VERSION;
 		storeData[getDifficulty].score = maxScore;
 		ls.setItem("bestCloudScore", JSON.stringify(storeData));
 		return maxScore;
